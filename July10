@@ -19,7 +19,7 @@
 
 #define totalTime 360.0 // total time
 #define maxCells 10000  // max number of cells
-#define growthRate 0.023  // growth rate
+#define growthRate 0.025  // growth rate
 #define divRate 0.5  // division rate
 #define delta_t 0.001   // the length of each little time step
 #define divideProb (divRate * delta_t)  // probability that the cell will divide
