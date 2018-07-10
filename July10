@@ -1,0 +1,474 @@
+//==========================================================//
+//  Cell Growth Model 1.2                                   //
+//  (now with stochasticity)                                //
+//                                                          //
+//  Created by Steven P Murray on 06/18/18.                 //
+//  Revised by Steven P Murray on 07/09/18.                 //
+//  Copyright © 2018 Steven P Murray. All rights reserved.  //
+//                                                          //
+//==========================================================//
+
+// INCLUDE LIBRARIES AND DEFINE GLOBAL CONSTANTS
+
+#include <iostream>
+#include <string>
+#include <cstdlib>
+#include <cmath>
+#include <fstream>
+#include <utility>
+
+#define totalTime 360.0 // total time
+#define maxCells 10000  // max number of cells
+#define growthRate 0.023  // growth rate
+#define divRate 0.5  // division rate
+#define delta_t 0.001   // the length of each little time step
+#define divideProb (divRate * delta_t)  // probability that the cell will divide
+#define totalSteps floor(totalTime/delta_t) // iterating over the total time steps
+
+//=============================================================================================================
+
+// DEFINE FUNCTIONS
+
+double growth(void);
+int pds(void);
+double split(void);
+double gaussian(void);
+double endpoints(void);
+bool onSegment(struct Point p, struct Point q, struct Point r);
+int orientation(struct Point p1, struct Point p2, struct Point p3);
+int intersect(void);
+double push(void);
+
+//=============================================================================================================
+
+// DEFINE CELL STRUCTURE
+
+struct cell
+{
+    int pds;    // potential dividing sites
+    double length;  // length of cell
+    double angle;   // angle of the cell
+    double x_com;  // x component of center of mass
+    double y_com;  // y component of center of mass
+    double x_end1;  // x component of first endpoint
+    double y_end1;  // y component of first endpoint
+    double x_end2;  // x component of second endpoint
+    double y_end2;  // y component of second endpoint
+    
+}
+cell_array[maxCells];   // keeping track of each cells
+
+//=============================================================================================================
+
+// POINT STURCTURE
+
+struct Point
+{
+    double x;
+    double y;
+}
+Point[maxCells];
+
+//=============================================================================================================
+
+// MAIN
+
+using namespace std;
+
+// starting with one cell
+int numCells = 1;   // start with one cell until it divides, then numCell will increase
+
+int main()
+{
+    // create a data file
+    FILE *output;
+    output = fopen("/Users/Steve/Documents/Xcode/Cell Growth Model 1.2/data.txt", "w+");
+    
+    // seeding the random number generator
+    srand (static_cast <unsigned> (time(0)));
+    
+    // initialize the cell we are starting with
+    cell_array[0].length = 2;
+    cell_array[0].pds = 0;
+    cell_array[0].angle = 0;
+    cell_array[0].x_com = 0;
+    cell_array[0].y_com = 0;
+    
+    // grow through all time steps
+    for (int i = 0; i < totalSteps; i++)
+    {
+        growth();
+        pds();
+        split();
+        //intersect();
+    }
+    
+    for (int num = 0; num < numCells; num++)
+    {
+        cout << "Cell " << num << "\t";
+        
+        cout << "Length: " << cell_array[num].length << "\t\t";
+        
+        cout << "Angle: " << cell_array[num].angle << "\t\t";
+        
+        cout << "Center of Mass: (" << cell_array[num].x_com << ", " << cell_array[num].y_com << ")\t\t";
+        
+        cout << "PDS: " << cell_array[num].pds << endl;
+        
+        // print 6 columns: cell number, cell length, cell angle, x-component, y-component, PDS
+        //fprintf(output, "%d\t%f\t%f\t%f\t%f\t%d\n", num, cell_array[num].length, cell_array[num].angle, cell_array[num].x_com, cell_array[num].y_com, cell_array[num].pds);
+        
+        // use for printing coordinates only.
+        fprintf(output, "%f\t%f\n",  cell_array[num].x_com, cell_array[num].y_com);
+
+    }
+    
+    // close the file
+    fclose(output);
+    
+    return 0;
+}
+
+//=============================================================================================================
+
+// GROWTH FUNCTION
+// dl/dt = growthRate * time
+// ==> length = length + (length)(growthRate)(dt)
+
+double growth(void)
+{
+        for (int num = 0; num < numCells; num++)
+        {
+            // store old length
+            double oldLength = cell_array[num].length;
+            
+            // cell grows
+            cell_array[num].length = cell_array[num].length * (1 + growthRate * delta_t);
+            
+            // center of mass
+            cell_array[num].x_com = cell_array[num].x_com + (((cell_array[num].length - oldLength) / 2) * cos(cell_array[num].angle));
+            cell_array[num].y_com = cell_array[num].y_com + (((cell_array[num].length - oldLength) / 2) * sin(cell_array[num].angle));
+        }
+    return 0;
+}
+
+//=============================================================================================================
+
+// NUMBER OF PDS
+
+int pds(void)
+{
+    for (int num = 0; num < numCells; num++)
+    {
+        if (cell_array[num].length > 2)
+        {
+            // first round down the length to nearest integer
+            double floor (double (cell_array[num].length) / 2);
+            
+            // calculate the numbe of PDS
+            cell_array[num].pds = floor - 1;
+        }
+    }
+    return 0;
+}
+
+//=============================================================================================================
+
+// SPLITTING
+
+double split(void)
+{
+    for (int num = 0; num < numCells; num++)
+    {
+        // look at each PDS...
+        for (int pds_num = 0; pds_num < cell_array[num].pds; pds_num++)
+        {
+            // ...determine if the PDS is ready to split
+            // creating a random number
+            float rndm = (float)(rand())/ (float)((unsigned)RAND_MAX + 1);
+            
+            // if the random number is between 0 and divideProb, it will divide
+            if (rndm < divideProb)
+            {
+                double length_variability = 0.1 * gaussian();   // +- 0.1 um
+                double angle_variability = 5 * gaussian();  // +- 5 degrees
+                
+                // create daughter cell (it will be the last cell in the array)
+                // adjust daughter cell length (daughter length = old mother length - new mother length)
+                cell_array[numCells].length = cell_array[num].length - ((pds_num + 1) * 2 /*um*/) + length_variability;
+                
+                // adjust the number of PDS in the daughter cell (daughter PDS = old mother PDS - new mother PDS)
+                cell_array[numCells].pds = cell_array[num].pds - pds_num - 1;
+                
+                // adjust daughter cell angle
+                cell_array[numCells].angle = cell_array[num].angle + angle_variability;
+                
+                // adjust daughter cell center of mass (it's own relative to its endpoint + adding on the mother's displacement)
+                cell_array[numCells].x_com = ((cell_array[numCells].length / 2) * cos(cell_array[numCells].angle)) + ((cell_array[num].length) * cos(cell_array[num].angle));
+                cell_array[numCells].y_com = ((cell_array[numCells].length / 2) * sin(cell_array[numCells].angle)) + ((cell_array[num].length) * sin(cell_array[num].angle));
+                
+                // increase the number of cells we have by one
+                numCells = numCells + 1;
+                
+                // adjust the new mother cell length
+                cell_array[num].length = (pds_num + 1) * 2 - length_variability /*um*/;
+                
+                // adjust the new number of PDS in the mother cell
+                cell_array[num].pds = pds_num;
+                
+                // adjust mother cell angle
+                cell_array[num].angle = cell_array[num].angle + angle_variability;
+                
+                // adjust mother cell center of mass
+                cell_array[num].x_com = (cell_array[num].length / 2) * cos(cell_array[num].angle);
+                cell_array[num].y_com = (cell_array[num].length / 2) * sin(cell_array[num].angle);
+                
+                if (numCells > maxCells)
+                {
+                    cout << "Maximum number of cells exceeded.";
+                    break;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+//=============================================================================================================
+
+// GAUSSIAN FUNCTION
+
+double gaussian(void)
+{
+    // mean 0
+    // sd 1
+    
+    double u = ((double) rand() / (RAND_MAX)) * 2 - 1;
+    double v = ((double) rand() / (RAND_MAX)) * 2 - 1;
+    double r = u * u + v * v;
+    if (r == 0 || r > 1) return gaussian();
+    double c = sqrt(-2 * log(r) / r);
+    return u * c;
+}
+
+//=============================================================================================================
+
+// ENDPOINTS (for intersection)
+
+double endpoints(void)
+{
+    for (int num = 0; num < numCells; num++)
+    {
+        cell_array[num].x_end1 = cell_array[num].x_com - (cell_array[num].length / 2) * cos(cell_array[num].angle); // x-comp of the cell p's first endpoint
+        cell_array[num].y_end1 = cell_array[num].y_com - (cell_array[num].length / 2) * sin(cell_array[num].angle); // y-comp of the cell p's first endpoint
+        
+        cell_array[num].x_end2 = cell_array[num].x_com + (cell_array[num].length / 2) * cos(cell_array[num].angle); // x-comp of the cell p's first endpoint
+        cell_array[num].y_end2 = cell_array[num].y_com + (cell_array[num].length / 2) * sin(cell_array[num].angle); // y-comp of the cell p's first endpoint
+    }
+    return 0;
+}
+
+//=============================================================================================================
+
+// ON SEGMENT (for intersection) ( https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/ )
+
+// Given three colinear points p, q, r, the function checks if
+// point q lies on line segment 'pr'
+bool onSegment(struct Point p, struct Point q, struct Point r)
+{
+    if (q.x <= max(p.x, r.x) && q.x >= min(p.x, r.x) &&
+        q.y <= max(p.y, r.y) && q.y >= min(p.y, r.y))
+        return true;
+    
+    return false;
+}
+
+//=============================================================================================================
+
+// ORIENTATION (for intersection) ( https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/ )
+
+// To find orientation of ordered triplet (p1, p2, p3).
+// The function returns following values
+// 0 --> p, q and r are colinear
+// 1 --> Clockwise
+// 2 --> Counterclockwise
+int orientation(struct Point p1, struct Point p2, struct Point p3)
+{
+    // See 10th slides from following link for derivation
+    // of the formula
+    int val = (p2.y - p1.y) * (p3.x - p2.x) -
+    (p2.x - p1.x) * (p3.y - p2.y);
+    
+    if (val == 0) return 0;  // colinear
+    
+    return (val > 0)? 1: 2; // clock or counterclock wise
+}
+
+//=============================================================================================================
+
+// INTERSECTION
+
+// this function checks to see if two cells intersect
+
+int intersect(void)
+{
+    // define all of the points
+    // p1 and p2 are the endpoints of cell p
+    // q1 and q2 are the endpoints of cell q
+    
+    int intersect_array[numCells][numCells]; // creating a matrix to see which cells interact with each other (1) and which do not (0)
+    
+    for (int num = 0; num < (numCells - 1); num++)
+    {
+        struct Point p1 = {cell_array[num].x_end1, cell_array[num].y_end1}, p2 = {cell_array[num].x_end2, cell_array[num].y_end2}; // endpoints of cell in question
+        
+        for (int next = num + 1; next <numCells; next++)
+        {
+            struct Point q1 = {cell_array[num].x_end1, cell_array[num].y_end1}, q2 = {cell_array[num].x_end2, cell_array[num].y_end2}; // endpoints of all subsequent cells
+            
+            // now to see if they intersect
+            // Find the four orientations needed for general and
+            // special cases
+            int o1 = orientation(p1, q1, p2);
+            int o2 = orientation(p1, q1, q2);
+            int o3 = orientation(p2, q2, p1);
+            int o4 = orientation(p2, q2, q1);
+            
+            // General case
+            if (o1 != o2 && o3 != o4)
+            {
+                intersect_array[num][next] = 1;
+            }
+            
+            // Special Cases
+            // p1, q1 and p2 are colinear and p2 lies on segment p1q1
+            if (o1 == 0 && onSegment(p1, p2, q1))
+            {
+                intersect_array[num][next] = 1;
+            }
+            
+            // p1, q1 and q2 are colinear and q2 lies on segment p1q1
+            if (o2 == 0 && onSegment(p1, q2, q1))
+            {
+                intersect_array[num][next] = 1;
+            }
+            
+            // p2, q2 and p1 are colinear and p1 lies on segment p2q2
+            if (o3 == 0 && onSegment(p2, p1, q2))
+            {
+                intersect_array[num][next] = 1;
+            }
+            
+            // p2, q2 and q1 are colinear and q1 lies on segment p2q2
+            if (o4 == 0 && onSegment(p2, q1, q2))
+            {
+                intersect_array[num][next] = 1;
+            }
+            
+            else
+            {
+                intersect_array[num][next] = 1; // Doesn't fall in any of the above cases
+            }
+        }
+    }
+    return 0;
+}
+
+//=============================================================================================================
+
+// PUSHING OTHER CELLS
+
+// look at each cell and determine whether it is in contact with another
+// if so, have it push and rewrite the center of mass
+// also need to add a change in angle
+
+double push(void)
+{
+    int intersect_array[numCells][numCells];
+    
+    for (int num = 0; num < (numCells - 1); num++)
+    {
+        for (int next = num + 1; next < numCells; next++)
+        {
+            if (intersect_array[num][next] == 1)   // if they are touching (intersecting)
+            {
+                double angleBetween = 0;
+                double d = 0;
+                double c = 0;
+                
+                double b = max(cell_array[num].x_com, cell_array[next].x_com);   // find angle beween the two
+                double a = min(cell_array[num].x_com, cell_array[next].x_com);
+                
+                if (b == cell_array[num].x_com)    // x2 must be > x1 because of the limitations on arctan being between -pi/2 and pi/2
+                {
+                    d = cell_array[num].y_com;
+                    c = cell_array[next].y_com;
+                }
+                
+                else
+                {
+                    d = cell_array[next].y_com;
+                    c = cell_array[num].y_com;
+                }
+                
+                angleBetween = atan((d - c) / (b - a)); // angle between two cells' center of masses
+                
+                // now that I know the angle, I need to find how far they will be pushed and adjust the center of masses
+                // find the point at which they intersect
+                
+                // defining variables for first cell
+                double x1 = cell_array[num].x_end1;
+                double y1 = cell_array[num].y_end1;
+                double x2 = cell_array[num].x_end2;
+                double y2 = cell_array[num].y_end1;
+                double m = (y2 - y1) / (x2 - x1);
+                double intercept = y1 - (m * x1);
+                
+                // defining variables for second cell
+                double x3 = cell_array[next].x_end1;
+                double y3 = cell_array[next].y_end1;
+                double x4 = cell_array[next].x_end2;
+                double y4 = cell_array[next].y_end1;
+                double n = (y4 - y3) / (x4 - x3);
+                
+                // calculate the contact point (xContact, yContact)
+                // if m and n are equal then they are parallel and will not interact unless they are on top of each other
+                if (m != n)
+                {
+                    double xContact = ((-1 * x3) + y3 + (m * x1) - y1) / (m - n);   // x coordinate of contact point
+                    double yContact = m * (xContact - x1) + y1; // y coordinate of contact point
+                }
+                
+                else if ((y1 < y3 < y2 && y3 == m * x1 + intercept) || (y1 < y4 < y2 && y4 == m * x1 + intercept)) // they are parallel. check to see if they are overlapped
+                 {
+                     if (cell_array[num].x_end1 == cell_array[next].x_end1 || cell_array[num].x_end1 == cell_array[next].x_end2)
+                     {
+                         double xContact = cell_array[num].x_end1;
+                         double yContact = cell_array[num].y_end1;
+                     }
+                     
+                     if (cell_array[num].x_end2 == cell_array[next].x_end1 || cell_array[num].x_end2 == cell_array[next].x_end2)
+                     {
+                         double xContact = cell_array[num].x_end2;
+                         double yContact = cell_array[num].y_end2;
+                     }
+                 }
+                
+                // if (xContact, yContact) is the endpoint of one of the cells, then that cell is the one striking the other
+                if (xContact == cell_array[num].x_end1 || xContact == cell_array[num].x_end2)
+                {
+                    // U = A * sigma^6 / (r_ij)^6
+                    // F = -6 * A * sigma^6 / (r_ij)^7 (F = -dU/dr)
+                    
+                    xForce = -6 * A * pow(sigma, 6) / pow(xDist, 7);
+                    yForce = -6 * A * pow(sigma, 6) / pow(yDist, 7);
+                    
+                    magForce = sqrt(pow(xForce, 2) + pow(yForce, 2));
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+//=============================================================================================================
